@@ -1,0 +1,20 @@
+# --- Visual Studio Temporary Files (The Junk) ---
+.vs/
+x64/
+Debug/
+Release/
+*.db
+*.pdb
+*.obj
+*.idb
+*.tlog
+*.log
+*.ipch
+*.opendb
+
+# --- User-Specific Settings (Don't share these) ---
+*.user
+
+# --- Mac/Windows System Files ---
+.DS_Store
+Thumbs.db
