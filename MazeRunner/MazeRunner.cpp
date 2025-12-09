@@ -1,6 +1,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 #include <SFML/Graphics.hpp>
+#include <SFML/Audio.hpp>
 #include <iostream>
 #include <fstream>
 #include <cstdlib>
@@ -311,7 +312,40 @@ int main() {
     sf::RenderWindow win(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Maze Race - Persistent");
     win.setFramerateLimit(60);
 
+    // --- AUDIO SETUP ---
+    sf::Music bgMusic;
+    if (!bgMusic.openFromFile("assets/sounds/background.mp3")) {
+        cout << "Error: assets/sounds/background.mp3 not found!" << endl;
+    }
+    bgMusic.setLoop(true); // Loop the background track
+    bgMusic.setVolume(30); // 30% Volume
+
+    sf::Music winMusic;
+    if (!winMusic.openFromFile("assets/sounds/win.mp3")) {
+        cout << "Error: assets/sounds/win.mp3 not found!" << endl;
+    }
+    winMusic.setVolume(50);
+    // -------------------
+
+    // --- BACKGROUND IMAGE SETUP ---
+    // 1. Load the file
+    if (!menuBgTexture.loadFromFile("assets/textures/menu_bg.png")) {
+        std::cout << "Error: assets/textures/menu_bg.png not found!" << std::endl;
+    }
+    else {
+        // 2. Apply texture to sprite
+        menuBgSprite.setTexture(menuBgTexture);
+
+        // 3. Auto-Scaling Logic (Forces image to fit window)
+        sf::Vector2u imgSize = menuBgTexture.getSize();
+        float scaleX = (float)WINDOW_WIDTH / imgSize.x;
+        float scaleY = (float)WINDOW_HEIGHT / imgSize.y;
+        menuBgSprite.setScale(scaleX, scaleY);
+    }
+    // ------------------------------
+
     sf::Font font;
+    // (Keep your font loading logic here exactly as it was)
 #if defined(_WIN32)
     font.loadFromFile("C:\\Windows\\Fonts\\arial.ttf");
 #elif defined(APPLE)
@@ -336,6 +370,8 @@ int main() {
                 if (e.type == sf::Event::KeyPressed) {
                     if (e.key.code == sf::Keyboard::Escape) win.close();
                     if (e.key.code == sf::Keyboard::R) resetWins();
+
+                    // START NEW GAME
                     if (e.key.code == sf::Keyboard::N) {
                         deleteSave();
                         generateMaze();
@@ -347,11 +383,23 @@ int main() {
                         state = ENTER_P1;
                         inMenu = false;
                         autosaveClock.restart();
+
+                        // --- AUDIO: Ensure silence during setup ---
+                        bgMusic.stop();
+                        winMusic.stop();
                     }
+
+                    // CONTINUE GAME
                     if (e.key.code == sf::Keyboard::C && hasSave) {
                         if (!loadGameState()) { generateMaze(); state = ENTER_P1; countdown = 120; }
                         inMenu = false;
                         autosaveClock.restart();
+
+                        // --- AUDIO: Resume music if game is active ---
+                        if (state == PLAYING || state == COUNTDOWN) {
+                            if (bgMusic.getStatus() != sf::SoundSource::Playing)
+                                bgMusic.play();
+                        }
                     }
                 }
                 drawMenu(win, font, hasSave);
@@ -374,12 +422,16 @@ int main() {
                         if (!ref.empty()) {
                             if (state == ENTER_P1) state = ENTER_P2;
                             else {
+                                // BOTH NAMES ENTERED -> START GAME
                                 generateMaze();
                                 p1x = startX; p1y = startY;
                                 p2x = startX; p2y = startY;
                                 p1_done = p2_done = false;
                                 countdown = 120;
                                 state = COUNTDOWN;
+
+                                // --- AUDIO: START THE HYPE ---
+                                bgMusic.play();
                             }
                         }
                     }
@@ -413,12 +465,21 @@ int main() {
                 if (f1 && f2) { state = FINISHED; saveWin("Tie"); saveGameState(); }
                 else if (f1) { state = FINISHED; saveWin(p1); p1Wins++; saveWins(); saveGameState(); }
                 else if (f2) { state = FINISHED; saveWin(p2); p2Wins++; saveWins(); saveGameState(); }
+
+                // --- AUDIO: GAME OVER ---
+                if (state == FINISHED) {
+                    bgMusic.stop();  // Cut the music
+                    winMusic.play(); // Play victory sound
+                }
             }
 
             if (state == FINISHED && e.type == sf::Event::KeyPressed && e.key.code == sf::Keyboard::Space) {
                 deleteSave();
                 p1 = ""; p2 = "";
                 state = ENTER_P1;
+
+                // --- AUDIO: RESET ---
+                winMusic.stop();
             }
         }
 
