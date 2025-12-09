@@ -1,5 +1,4 @@
 #define _CRT_SECURE_NO_WARNINGS
-
 #include <SFML/Graphics.hpp>
 #include <SFML/Audio.hpp>
 #include <iostream>
@@ -9,343 +8,347 @@
 #include <string>
 #include <cstdio>
 #include <limits>
-#include <cstring>
-
 using namespace std;
 
-// -------- CONSTANTS --------
-const int CELL = 24;
-const int W = 31;
-const int H = 31;
+// -------------------- CONFIG --------------------
+const int CELL_SIZE = 24;
+const int MAZE_W = 31;
+const int MAZE_H = 31;
 const int HUD_HEIGHT = 70;
-const int WINDOW_WIDTH = W * CELL;
-const int WINDOW_HEIGHT = H * CELL + HUD_HEIGHT;
+const int WINDOW_W = MAZE_W * CELL_SIZE;
+const int WINDOW_H = MAZE_H * CELL_SIZE + HUD_HEIGHT;
 
 // Files
 const string SAVE_FILE = "savegame.txt";
 const string SAVE_TMP = "savegame.tmp";
 const string WINS_FILE = "winhistory.txt";
-const int MAX_WINS = 3;
 const string WINS_COUNT_FILE = "wins_count.txt";
+const int MAX_WINS_TO_STORE = 3; // stores last 3 wins in history
 
-// Maze array
-int maze[H][W];
+// Maze storage: only 2D arrays, simple loops
+int maze[MAZE_H][MAZE_W];
 
-// Directions
-int dx[4] = { 0, 0, -2, 2 };
-int dy[4] = { -2, 2, 0, 0 };
+// Movement offsets (up, down, left, right) stepping by 2 for maze generation
+int moveX[4] = { 0, 0, -2, 2 };
+int moveY[4] = { -2, 2, 0, 0 };
 
-// Game state
-enum GameState { MENU = 10, ENTER_P1 = 0, ENTER_P2 = 1, COUNTDOWN = 2, PLAYING = 3, FINISHED = 4 };
-GameState state = MENU;
+// -------------------- GAME MODE CONSTANTS (no enum) --------------------
+const int MODE_MENU = 10;
+const int MODE_ENTER_P1 = 0;
+const int MODE_ENTER_P2 = 1;
+const int MODE_COUNTDOWN = 2;
+const int MODE_PLAYING = 3;
+const int MODE_FINISHED = 4;
 
-// Player info
-string p1 = "", p2 = "";
-int p1x = 1, p1y = 1;
-int p2x = 1, p2y = 1;
-bool p1_done = false, p2_done = false;
+// Current mode
+int gameMode = MODE_MENU;
 
-// Start & goal
+// Players
+string player1Name = "";
+string player2Name = "";
+int player1X = 1, player1Y = 1;
+int player2X = 1, player2Y = 1;
+bool player1Reached = false, player2Reached = false;
+
+// Start/goal
 int startX = 1, startY = 1;
-int goalX = W - 2, goalY = H - 2;
+int goalX = MAZE_W - 2, goalY = MAZE_H - 2;
 
-// Countdown
-int countdown = 120;
+// Countdown counter (frames or ticks) - we will use a simple integer and decrement in loop
+int countdownTicks = 120;
 
-// Wins
-int p1Wins = 0, p2Wins = 0;
+// Win counters
+int player1Wins = 0, player2Wins = 0;
 
-// ---- NEW: Menu background ----
-sf::Texture menuBgTexture;
-sf::Sprite menuBgSprite;
+// Menu background (optional)
+sf::Texture menuBackgroundTexture;
+sf::Sprite menuBackgroundSprite;
 
-// -------- Maze Functions --------
-void fillMaze() {
-    for (int y = 0; y < H; y++)
-        for (int x = 0; x < W; x++)
-            maze[y][x] = 1;
+// -------------------- MAZE HELPERS --------------------
+void fillAllWithWalls() {
+    for (int y = 0; y < MAZE_H; y++)
+        for (int x = 0; x < MAZE_W; x++)
+            maze[y][x] = 1; // 1 means wall
 }
-bool isInside(int x, int y) { return x > 0 && x < W - 1 && y > 0 && y < H - 1; }
 
-void shuffleDirs(int arr[4]) {
-    for (int i = 3; i > 0; i--) {
+bool insideBounds(int x, int y) {
+    return x > 0 && x < MAZE_W - 1 && y > 0 && y < MAZE_H - 1;
+}
+
+void shuffleArray(int arr[], int n) {
+    for (int i = n - 1; i > 0; i--) {
         int j = rand() % (i + 1);
-        int temp = arr[i];
-        arr[i] = arr[j];
-        arr[j] = temp;
+        int tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
     }
 }
 
-void generateMaze() {
-    fillMaze();
-    int stack[H * W][2];
+// Simple depth-first maze using an explicit stack array (allowed constructs only)
+void generateMazeSimple() {
+    fillAllWithWalls();
+    int stackArr[MAZE_W * MAZE_H][2];
     int top = 0;
-
-    stack[top][0] = startX; stack[top][1] = startY; top++;
-    maze[startY][startX] = 0;
+    stackArr[top][0] = startX;
+    stackArr[top][1] = startY;
+    top++;
+    maze[startY][startX] = 0; // 0 means empty/path
 
     while (top > 0) {
-        int curX = stack[top - 1][0];
-        int curY = stack[top - 1][1];
-        top--;
+        int curX = stackArr[top - 1][0];
+        int curY = stackArr[top - 1][1];
+        top--; // pop
 
         int dirs[4] = { 0,1,2,3 };
-        shuffleDirs(dirs);
+        shuffleArray(dirs, 4);
 
         for (int i = 0; i < 4; i++) {
-            int dir = dirs[i];
-            int nx = curX + dx[dir];
-            int ny = curY + dy[dir];
-            if (isInside(nx, ny) && maze[ny][nx] == 1) {
-                maze[curY + dy[dir] / 2][curX + dx[dir] / 2] = 0;
+            int d = dirs[i];
+            int nx = curX + moveX[d];
+            int ny = curY + moveY[d];
+            if (insideBounds(nx, ny) && maze[ny][nx] == 1) {
+                // knock down wall between
+                maze[curY + moveY[d] / 2][curX + moveX[d] / 2] = 0;
                 maze[ny][nx] = 0;
-                stack[top][0] = nx; stack[top][1] = ny; top++;
+                stackArr[top][0] = nx;
+                stackArr[top][1] = ny;
+                top++;
             }
         }
     }
-
     maze[startY][startX] = 0;
     maze[goalY][goalX] = 0;
 }
 
-float centerX(int gx) { return gx * CELL + CELL / 2; }
-float centerY(int gy) { return gy * CELL + CELL / 2; }
+// center helpers for rendering
+float centerPixelX(int gridX) { return gridX * CELL_SIZE + CELL_SIZE / 2.0f; }
+float centerPixelY(int gridY) { return gridY * CELL_SIZE + CELL_SIZE / 2.0f; }
 
-// -------- SAVE/LOAD -------- (unchanged)
-void saveWin(const string& winner) {
-    string wins[MAX_WINS];
-    int count = 0;
+// -------------------- SIMPLE SAVE / LOAD --------------------
+// We only use basic file streams and simple formatting so no complex libs.
 
-    ifstream fin(WINS_FILE);
-    string line;
-    while (getline(fin, line) && count < MAX_WINS - 1) {
-        if (!line.empty()) { wins[count] = line; count++; }
-    }
-    fin.close();
-
-    time_t now = time(nullptr);
-    char buf[64];
-    struct tm* tm_info = localtime(&now);
-    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm_info);
-    string entry = winner + " at " + buf;
-
-    ofstream fout(WINS_FILE, ios::trunc);
-    fout << entry << "\n";
-    for (int i = 0; i < count; ++i) fout << wins[i] << "\n";
-    fout.close();
-}
-
-bool writeSaveTempAndReplace(const string& content) {
-    ofstream fout(SAVE_TMP, ios::trunc);
+bool atomicWriteReplace(const string& filename, const string& tempname, const string& data) {
+    ofstream fout(tempname.c_str(), ios::trunc);
     if (!fout) return false;
-    fout << content;
+    fout << data;
     fout.close();
-
-    std::remove(SAVE_FILE.c_str());
-    if (std::rename(SAVE_TMP.c_str(), SAVE_FILE.c_str()) != 0) {
-        std::remove(SAVE_TMP.c_str());
+    remove(filename.c_str());
+    if (rename(tempname.c_str(), filename.c_str()) != 0) {
+        remove(tempname.c_str());
         return false;
     }
     return true;
 }
 
-void saveGameState() {
-    string content;
-    content += to_string((int)state) + "\n";
-    content += p1 + "\n" + p2 + "\n";
-    content += to_string(p1x) + " " + to_string(p1y) + "\n";
-    content += to_string(p2x) + " " + to_string(p2y) + "\n";
-    content += to_string(p1_done) + " " + to_string(p2_done) + "\n";
-    content += to_string(countdown) + "\n";
-    content += to_string(startX) + " " + to_string(startY) + "\n";
-    content += to_string(goalX) + " " + to_string(goalY) + "\n";
+void saveWinToHistory(const string& winner) {
+    // read last lines (simple approach)
+    string previous[MAX_WINS_TO_STORE];
+    int c = 0;
+    ifstream fin(WINS_FILE.c_str());
+    string line;
+    while (getline(fin, line) && c < MAX_WINS_TO_STORE - 1) {
+        if (!line.empty()) { previous[c] = line; c++; }
+    }
+    fin.close();
 
-    for (int y = 0; y < H; y++)
-        for (int x = 0; x < W; x++)
-            content += to_string(maze[y][x]) + (x < W - 1 ? " " : "\n");
+    time_t now = time(nullptr);
+    char buf[64];
+    struct tm* t = localtime(&now);
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", t);
+    string entry = winner + " at " + buf;
 
-    writeSaveTempAndReplace(content);
+    ofstream fout(WINS_FILE.c_str(), ios::trunc);
+    fout << entry << "\n";
+    for (int i = 0; i < c; i++) fout << previous[i] << "\n";
+    fout.close();
 }
 
-bool loadGameState() {
-    ifstream fin(SAVE_FILE);
+void saveWinsCount() {
+    ofstream fout(WINS_COUNT_FILE.c_str(), ios::trunc);
+    if (!fout) return;
+    fout << player1Wins << " " << player2Wins << "\n";
+    fout.close();
+}
+
+void loadWinsCount() {
+    ifstream fin(WINS_COUNT_FILE.c_str());
+    if (!fin) { player1Wins = 0; player2Wins = 0; return; }
+    fin >> player1Wins >> player2Wins;
+    fin.close();
+}
+
+bool saveGameStateToFile() {
+    string content = "";
+    content += to_string(gameMode) + "\n";
+    content += player1Name + "\n";
+    content += player2Name + "\n";
+    content += to_string(player1X) + " " + to_string(player1Y) + "\n";
+    content += to_string(player2X) + " " + to_string(player2Y) + "\n";
+    content += to_string(player1Reached) + " " + to_string(player2Reached) + "\n";
+    content += to_string(countdownTicks) + "\n";
+    content += to_string(startX) + " " + to_string(startY) + "\n";
+    content += to_string(goalX) + " " + to_string(goalY) + "\n";
+    for (int y = 0; y < MAZE_H; y++) {
+        for (int x = 0; x < MAZE_W; x++) {
+            content += to_string(maze[y][x]);
+            if (x < MAZE_W - 1) content += " ";
+        }
+        content += "\n";
+    }
+    return atomicWriteReplace(SAVE_FILE, SAVE_TMP, content);
+}
+
+bool loadGameStateFromFile() {
+    ifstream fin(SAVE_FILE.c_str());
     if (!fin) return false;
-
-    int st;
-    if (!(fin >> st)) return false;
-    state = (GameState)st;
-
+    int m;
+    if (!(fin >> m)) { fin.close(); return false; }
+    gameMode = m;
     fin.ignore(numeric_limits<streamsize>::max(), '\n');
-    getline(fin, p1);
-    getline(fin, p2);
-
-    fin >> p1x >> p1y >> p2x >> p2y;
-    int d1, d2;
-    fin >> d1 >> d2;
-    p1_done = d1; p2_done = d2;
-
-    fin >> countdown >> startX >> startY >> goalX >> goalY;
-
-    for (int y = 0; y < H; y++)
-        for (int x = 0; x < W; x++)
-            fin >> maze[y][x];
-
+    getline(fin, player1Name);
+    getline(fin, player2Name);
+    fin >> player1X >> player1Y >> player2X >> player2Y;
+    int d1, d2; fin >> d1 >> d2; player1Reached = d1; player2Reached = d2;
+    fin >> countdownTicks >> startX >> startY >> goalX >> goalY;
+    for (int y = 0; y < MAZE_H; y++)
+        for (int x = 0; x < MAZE_W; x++) fin >> maze[y][x];
+    fin.close();
     return true;
 }
 
-void deleteSave() { remove(SAVE_FILE.c_str()); }
-bool saveExists() { ifstream f(SAVE_FILE); return f.good(); }
+void deleteSaveFile() { remove(SAVE_FILE.c_str()); }
 
-void loadWins() {
-    ifstream fin(WINS_COUNT_FILE);
-    if (!fin) { p1Wins = p2Wins = 0; return; }
-    fin >> p1Wins >> p2Wins;
+bool saveFileExists() {
+    ifstream f(SAVE_FILE.c_str());
+    return f.good();
 }
-void saveWins() {
-    ofstream fout(WINS_COUNT_FILE, ios::trunc);
-    fout << p1Wins << " " << p2Wins;
-}
-void resetWins() { p1Wins = p2Wins = 0; saveWins(); }
 
-// -------- DRAW MENU WITH BACKGROUND --------
-void drawMenu(sf::RenderWindow& win, const sf::Font& font, bool hasSave) {
-    win.clear();
-    win.draw(menuBgSprite);
+void resetWinCounters() { player1Wins = 0; player2Wins = 0; saveWinsCount(); }
 
-    // Optional: dark overlay
-    sf::RectangleShape overlay(sf::Vector2f(WINDOW_WIDTH, WINDOW_HEIGHT));
+// -------------------- DRAWING --------------------
+
+void drawMenuScreen(sf::RenderWindow& window, const sf::Font& font, bool hasSave) {
+    window.clear();
+    // background image if loaded
+    window.draw(menuBackgroundSprite);
+    // dark overlay
+    sf::RectangleShape overlay(sf::Vector2f(WINDOW_W, WINDOW_H));
     overlay.setFillColor(sf::Color(0, 0, 0, 120));
-    win.draw(overlay);
+    window.draw(overlay);
 
     sf::Text title("MAZE RACE", font, 64);
-    title.setPosition(WINDOW_WIDTH / 2 - title.getLocalBounds().width / 2, 80);
-    win.draw(title);
+    title.setPosition(WINDOW_W / 2 - title.getLocalBounds().width / 2, 80);
+    window.draw(title);
 
-    sf::Text sub("Press N for New Game | C to Continue | R Reset Wins | ESC Exit", font, 18);
-    sub.setPosition(WINDOW_WIDTH / 2 - sub.getLocalBounds().width / 2, 150);
-    win.draw(sub);
+    sf::Text hint("Press N = New | C = Continue | R = Reset Wins | ESC = Exit", font, 18);
+    hint.setPosition(WINDOW_W / 2 - hint.getLocalBounds().width / 2, 150);
+    window.draw(hint);
 
-    sf::Text players("", font, 24);
-    players.setPosition(WINDOW_WIDTH / 2 - 150, 200);
-    players.setString("Player 1: " + p1 + " (" + to_string(p1Wins) + " wins)\nPlayer 2: " + p2 + " (" + to_string(p2Wins) + " wins)");
-    win.draw(players);
+    sf::Text playersTxt("", font, 24);
+    playersTxt.setPosition(40, 200);
+    string s = "Player1: " + player1Name + " (" + to_string(player1Wins) + ")\nPlayer2: " + player2Name + " (" + to_string(player2Wins) + ")";
+    playersTxt.setString(s);
+    window.draw(playersTxt);
 
     sf::Text btnNew("Start New Game (N)", font, 36);
-    btnNew.setPosition(WINDOW_WIDTH / 2 - btnNew.getLocalBounds().width / 2, 300);
-    win.draw(btnNew);
+    btnNew.setPosition(WINDOW_W / 2 - btnNew.getLocalBounds().width / 2, 300);
+    window.draw(btnNew);
 
     sf::Text btnContinue("Continue Saved Game (C)", font, 36);
-    btnContinue.setFillColor(hasSave ? sf::Color::White : sf::Color(120, 120, 120));
-    btnContinue.setPosition(WINDOW_WIDTH / 2 - btnContinue.getLocalBounds().width / 2, 380);
-    win.draw(btnContinue);
+    if (!hasSave) btnContinue.setFillColor(sf::Color(120, 120, 120));
+    btnContinue.setPosition(WINDOW_W / 2 - btnContinue.getLocalBounds().width / 2, 360);
+    window.draw(btnContinue);
 
-    win.display();
+    window.display();
 }
 
-// -------- DRAW GAME (unchanged) --------
-void drawAll(sf::RenderWindow& win, const sf::Font& font) {
-    win.clear(sf::Color(10, 10, 30));
+void drawGameScreen(sf::RenderWindow& window, const sf::Font& font) {
+    window.clear(sf::Color(10, 10, 30));
 
-    sf::RectangleShape cell(sf::Vector2f((float)CELL, (float)CELL));
-    for (int y = 0; y < H; y++)
-        for (int x = 0; x < W; x++) {
-            cell.setFillColor(maze[y][x] ? sf::Color(40, 40, 60) : sf::Color(120, 120, 160));
-            cell.setPosition(x * CELL, y * CELL);
-            win.draw(cell);
+    sf::RectangleShape cellShape(sf::Vector2f((float)CELL_SIZE, (float)CELL_SIZE));
+    for (int y = 0; y < MAZE_H; y++) {
+        for (int x = 0; x < MAZE_W; x++) {
+            if (maze[y][x] == 1) cellShape.setFillColor(sf::Color(40, 40, 60));
+            else cellShape.setFillColor(sf::Color(120, 120, 160));
+            cellShape.setPosition(x * CELL_SIZE, y * CELL_SIZE);
+            window.draw(cellShape);
         }
-
-    sf::RectangleShape goal(sf::Vector2f((float)CELL, (float)CELL));
-    goal.setPosition(goalX * CELL, goalY * CELL);
-    goal.setFillColor(sf::Color::Yellow);
-    win.draw(goal);
-
-    sf::CircleShape c1(CELL * 0.45f); c1.setOrigin(c1.getRadius(), c1.getRadius());
-    c1.setPosition(centerX(p1x), centerY(p1y)); c1.setFillColor(sf::Color::Blue);
-    win.draw(c1);
-
-    sf::CircleShape c2(CELL * 0.45f); c2.setOrigin(c2.getRadius(), c2.getRadius());
-    c2.setPosition(centerX(p2x), centerY(p2y)); c2.setFillColor(sf::Color::Red);
-    win.draw(c2);
-
-    sf::RectangleShape hud(sf::Vector2f(WINDOW_WIDTH, HUD_HEIGHT));
-    hud.setPosition(0, H * CELL);
-    hud.setFillColor(sf::Color::Black);
-    win.draw(hud);
-
-    sf::Text t("", font, 20);
-
-    if (state == ENTER_P1) {
-        t.setString("Enter Player 1: " + p1 + "_");
-        t.setPosition(10, H * CELL + 20);
-        win.draw(t); return;
     }
-    if (state == ENTER_P2) {
-        t.setString("Enter Player 2: " + p2 + "_");
-        t.setPosition(10, H * CELL + 20);
-        win.draw(t); return;
+    // draw goal
+    sf::RectangleShape goalShape(sf::Vector2f((float)CELL_SIZE, (float)CELL_SIZE));
+    goalShape.setPosition(goalX * CELL_SIZE, goalY * CELL_SIZE);
+    goalShape.setFillColor(sf::Color::Yellow);
+    window.draw(goalShape);
+
+    // players
+    sf::CircleShape p1(CELL_SIZE * 0.45f); p1.setOrigin(p1.getRadius(), p1.getRadius());
+    p1.setPosition(centerPixelX(player1X), centerPixelY(player1Y)); p1.setFillColor(sf::Color::Blue);
+    window.draw(p1);
+
+    sf::CircleShape p2(CELL_SIZE * 0.45f); p2.setOrigin(p2.getRadius(), p2.getRadius());
+    p2.setPosition(centerPixelX(player2X), centerPixelY(player2Y)); p2.setFillColor(sf::Color::Red);
+    window.draw(p2);
+
+    // HUD
+    sf::RectangleShape hud(sf::Vector2f(WINDOW_W, HUD_HEIGHT)); hud.setPosition(0, MAZE_H * CELL_SIZE); hud.setFillColor(sf::Color::Black);
+    window.draw(hud);
+
+    sf::Text info("", font, 20);
+    if (gameMode == MODE_ENTER_P1) {
+        info.setString("Enter Player 1: " + player1Name + "_"); info.setPosition(10, MAZE_H * CELL_SIZE + 20); window.draw(info); window.display(); return;
     }
-    if (state == COUNTDOWN) {
-        t.setString("Get Ready...");
-        t.setPosition(WINDOW_WIDTH / 2 - 80, WINDOW_HEIGHT / 2 - 40);
-        t.setCharacterSize(40);
-        win.draw(t); return;
+    if (gameMode == MODE_ENTER_P2) {
+        info.setString("Enter Player 2: " + player2Name + "_"); info.setPosition(10, MAZE_H * CELL_SIZE + 20); window.draw(info); window.display(); return;
     }
-    if (state == PLAYING) {
-        t.setString(p1 + " (WASD) vs " + p2 + " (ARROWS)");
-        t.setPosition(10, H * CELL + 20);
-        win.draw(t); return;
+    if (gameMode == MODE_COUNTDOWN) {
+        info.setString("Get Ready..."); info.setCharacterSize(40); info.setPosition(WINDOW_W / 2 - 80, WINDOW_H / 2 - 40); window.draw(info); window.display(); return;
     }
-    if (state == FINISHED) {
-        string winner = (p1_done && p2_done) ? "It's a tie!"
-            : (p1_done ? p1 + " WINS!" : p2 + " WINS!");
-        t.setString(winner + "\nPress SPACE to restart");
-        t.setCharacterSize(30);
-        t.setPosition(WINDOW_WIDTH / 2 - 150, WINDOW_HEIGHT / 2 - 40);
-        win.draw(t);
+    if (gameMode == MODE_PLAYING) {
+        info.setString(player1Name + " (WASD) vs " + player2Name + " (ARROWS)"); info.setPosition(10, MAZE_H * CELL_SIZE + 20); window.draw(info); window.display(); return;
     }
+    if (gameMode == MODE_FINISHED) {
+        string winner;
+        if (player1Reached && player2Reached) winner = "It's a tie!";
+        else if (player1Reached) winner = player1Name + " WINS!";
+        else winner = player2Name + " WINS!";
+        info.setString(winner + "\nPress SPACE to restart"); info.setCharacterSize(30); info.setPosition(WINDOW_W / 2 - 150, WINDOW_H / 2 - 40);
+        window.draw(info); window.display(); return;
+    }
+
+    window.display();
 }
 
-// -------- MAIN --------
+// -------------------- MAIN --------------------
 int main() {
     srand((unsigned int)time(nullptr));
 
-    sf::RenderWindow win(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Maze Race - Persistent");
-    win.setFramerateLimit(60);
+    sf::RenderWindow window(sf::VideoMode(WINDOW_W, WINDOW_H), "Maze Race - Simple");
+    window.setFramerateLimit(60);
 
-    // --- AUDIO SETUP ---
-    sf::Music bgMusic;
-    if (!bgMusic.openFromFile("assets/sounds/background.mp3")) {
-        cout << "Error: assets/sounds/background.mp3 not found!" << endl;
+    // audio (optional) - if missing files just print message and continue
+    sf::Music backgroundMusic;
+    if (!backgroundMusic.openFromFile("assets/sounds/background.mp3")) {
+        cout << "Warning: background music not found." << endl;
     }
-    bgMusic.setLoop(true); // Loop the background track
-    bgMusic.setVolume(30); // 30% Volume
+    else { backgroundMusic.setLoop(true); backgroundMusic.setVolume(30); }
 
-    sf::Music winMusic;
-    if (!winMusic.openFromFile("assets/sounds/win.mp3")) {
-        cout << "Error: assets/sounds/win.mp3 not found!" << endl;
+    sf::Music victoryMusic;
+    if (!victoryMusic.openFromFile("assets/sounds/win.mp3")) {
+        cout << "Warning: victory music not found." << endl;
     }
-    winMusic.setVolume(50);
-    // -------------------
+    else { victoryMusic.setVolume(50); }
 
-    // --- BACKGROUND IMAGE SETUP ---
-    // 1. Load the file
-    if (!menuBgTexture.loadFromFile("assets/textures/menu_bg.png")) {
-        std::cout << "Error: assets/textures/menu_bg.png not found!" << std::endl;
+    // menu background image (optional)
+    if (!menuBackgroundTexture.loadFromFile("assets/textures/menu_bg.png")) {
+        // leave sprite empty if image not found
     }
     else {
-        // 2. Apply texture to sprite
-        menuBgSprite.setTexture(menuBgTexture);
-
-        // 3. Auto-Scaling Logic (Forces image to fit window)
-        sf::Vector2u imgSize = menuBgTexture.getSize();
-        float scaleX = (float)WINDOW_WIDTH / imgSize.x;
-        float scaleY = (float)WINDOW_HEIGHT / imgSize.y;
-        menuBgSprite.setScale(scaleX, scaleY);
+        menuBackgroundSprite.setTexture(menuBackgroundTexture);
+        sf::Vector2u s = menuBackgroundTexture.getSize();
+        float sx = (float)WINDOW_W / s.x; float sy = (float)WINDOW_H / s.y;
+        menuBackgroundSprite.setScale(sx, sy);
     }
-    // ------------------------------
 
+    // font - platform dependent paths; keep same approach as original
     sf::Font font;
-    // (Keep your font loading logic here exactly as it was)
 #if defined(_WIN32)
     font.loadFromFile("C:\\Windows\\Fonts\\arial.ttf");
 #elif defined(APPLE)
@@ -354,148 +357,128 @@ int main() {
     font.loadFromFile("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
 #endif
 
-    loadWins();
-
+    loadWinsCount();
     bool inMenu = true;
-    generateMaze();
+    generateMazeSimple();
+
     sf::Clock autosaveClock; autosaveClock.restart();
 
-    while (win.isOpen()) {
+    while (window.isOpen()) {
         sf::Event e;
-        while (win.pollEvent(e)) {
-            if (e.type == sf::Event::Closed) { if (!inMenu) saveGameState(); win.close(); }
+        while (window.pollEvent(e)) {
+            if (e.type == sf::Event::Closed) { if (!inMenu) saveGameStateToFile(); window.close(); }
 
             if (inMenu) {
-                bool hasSave = saveExists();
+                bool hasSave = saveFileExists();
                 if (e.type == sf::Event::KeyPressed) {
-                    if (e.key.code == sf::Keyboard::Escape) win.close();
-                    if (e.key.code == sf::Keyboard::R) resetWins();
+                    if (e.key.code == sf::Keyboard::Escape) window.close();
+                    if (e.key.code == sf::Keyboard::R) { resetWinCounters(); }
 
-                    // START NEW GAME
+                    // New game
                     if (e.key.code == sf::Keyboard::N) {
-                        deleteSave();
-                        generateMaze();
-                        p1 = ""; p2 = "";
-                        p1x = startX; p1y = startY;
-                        p2x = startX; p2y = startY;
-                        p1_done = p2_done = false;
-                        countdown = 120;
-                        state = ENTER_P1;
-                        inMenu = false;
-                        autosaveClock.restart();
-
-                        // --- AUDIO: Ensure silence during setup ---
-                        bgMusic.stop();
-                        winMusic.stop();
+                        deleteSaveFile();
+                        generateMazeSimple();
+                        player1Name = ""; player2Name = "";
+                        player1X = startX; player1Y = startY; player2X = startX; player2Y = startY;
+                        player1Reached = false; player2Reached = false; countdownTicks = 120;
+                        gameMode = MODE_ENTER_P1; inMenu = false; autosaveClock.restart();
+                        if (backgroundMusic.getStatus() == sf::SoundSource::Stopped) backgroundMusic.stop();
                     }
 
-                    // CONTINUE GAME
+                    // Continue saved game
                     if (e.key.code == sf::Keyboard::C && hasSave) {
-                        if (!loadGameState()) { generateMaze(); state = ENTER_P1; countdown = 120; }
-                        inMenu = false;
-                        autosaveClock.restart();
-
-                        // --- AUDIO: Resume music if game is active ---
-                        if (state == PLAYING || state == COUNTDOWN) {
-                            if (bgMusic.getStatus() != sf::SoundSource::Playing)
-                                bgMusic.play();
-                        }
+                        if (!loadGameStateFromFile()) { generateMazeSimple(); gameMode = MODE_ENTER_P1; countdownTicks = 120; }
+                        inMenu = false; autosaveClock.restart();
+                        if (gameMode == MODE_PLAYING || gameMode == MODE_COUNTDOWN) { if (backgroundMusic.getStatus() != sf::SoundSource::Playing) backgroundMusic.play(); }
                     }
                 }
-                drawMenu(win, font, hasSave);
-                continue;
+                drawMenuScreen(window, font, hasSave);
+                continue; // skip rest of event processing
             }
 
-            if (state == ENTER_P1 || state == ENTER_P2) {
+            // TEXT ENTRY for player names
+            if (gameMode == MODE_ENTER_P1 || gameMode == MODE_ENTER_P2) {
                 if (e.type == sf::Event::TextEntered) {
                     uint32_t u = e.text.unicode;
-                    string& ref = (state == ENTER_P1) ? p1 : p2;
-                    if (u >= 32 && u < 127 && ref.size() < 12)
-                        ref.push_back((char)u);
+                    string& ref = (gameMode == MODE_ENTER_P1) ? player1Name : player2Name;
+                    if (u >= 32 && u < 127 && ref.size() < 12) ref.push_back((char)u);
                 }
                 if (e.type == sf::Event::KeyPressed) {
-                    string& ref = (state == ENTER_P1) ? p1 : p2;
-                    if (e.key.code == sf::Keyboard::BackSpace) {
-                        if (!ref.empty()) ref.pop_back();
-                    }
+                    string& ref = (gameMode == MODE_ENTER_P1) ? player1Name : player2Name;
+                    if (e.key.code == sf::Keyboard::BackSpace) { if (!ref.empty()) ref.pop_back(); }
                     else if (e.key.code == sf::Keyboard::Enter) {
                         if (!ref.empty()) {
-                            if (state == ENTER_P1) state = ENTER_P2;
+                            if (gameMode == MODE_ENTER_P1) gameMode = MODE_ENTER_P2;
                             else {
-                                // BOTH NAMES ENTERED -> START GAME
-                                generateMaze();
-                                p1x = startX; p1y = startY;
-                                p2x = startX; p2y = startY;
-                                p1_done = p2_done = false;
-                                countdown = 120;
-                                state = COUNTDOWN;
-
-                                // --- AUDIO: START THE HYPE ---
-                                bgMusic.play();
+                                // both names entered, start
+                                generateMazeSimple();
+                                player1X = startX; player1Y = startY; player2X = startX; player2Y = startY;
+                                player1Reached = false; player2Reached = false; countdownTicks = 120;
+                                gameMode = MODE_COUNTDOWN; if (backgroundMusic.getStatus() != sf::SoundSource::Playing) backgroundMusic.play();
                             }
                         }
                     }
                 }
             }
 
-            if (state == PLAYING && e.type == sf::Event::KeyPressed) {
-                bool f1 = false, f2 = false;
+            // PLAYER MOVEMENT when playing
+            if (gameMode == MODE_PLAYING && e.type == sf::Event::KeyPressed) {
+                bool flag1 = false, flag2 = false;
                 int nx, ny;
-
-                if (!p1_done) {
-                    nx = p1x; ny = p1y;
+                if (!player1Reached) {
+                    nx = player1X; ny = player1Y;
                     if (e.key.code == sf::Keyboard::W) ny--;
                     if (e.key.code == sf::Keyboard::S) ny++;
                     if (e.key.code == sf::Keyboard::A) nx--;
                     if (e.key.code == sf::Keyboard::D) nx++;
-                    if (maze[ny][nx] == 0) { p1x = nx; p1y = ny; }
-                    if (p1x == goalX && p1y == goalY) { p1_done = true; f1 = true; }
+                    if (nx >= 0 && nx < MAZE_W && ny >= 0 && ny < MAZE_H && maze[ny][nx] == 0) { player1X = nx; player1Y = ny; }
+                    if (player1X == goalX && player1Y == goalY) { player1Reached = true; flag1 = true; }
                 }
-
-                if (!p2_done) {
-                    nx = p2x; ny = p2y;
+                if (!player2Reached) {
+                    nx = player2X; ny = player2Y;
                     if (e.key.code == sf::Keyboard::Up) ny--;
                     if (e.key.code == sf::Keyboard::Down) ny++;
                     if (e.key.code == sf::Keyboard::Left) nx--;
                     if (e.key.code == sf::Keyboard::Right) nx++;
-                    if (maze[ny][nx] == 0) { p2x = nx; p2y = ny; }
-                    if (p2x == goalX && p2y == goalY) { p2_done = true; f2 = true; }
+                    if (nx >= 0 && nx < MAZE_W && ny >= 0 && ny < MAZE_H && maze[ny][nx] == 0) { player2X = nx; player2Y = ny; }
+                    if (player2X == goalX && player2Y == goalY) { player2Reached = true; flag2 = true; }
                 }
 
-                if (f1 && f2) { state = FINISHED; saveWin("Tie"); saveGameState(); }
-                else if (f1) { state = FINISHED; saveWin(p1); p1Wins++; saveWins(); saveGameState(); }
-                else if (f2) { state = FINISHED; saveWin(p2); p2Wins++; saveWins(); saveGameState(); }
-
-                // --- AUDIO: GAME OVER ---
-                if (state == FINISHED) {
-                    bgMusic.stop();  // Cut the music
-                    winMusic.play(); // Play victory sound
+                if (flag1 && flag2) {
+                    gameMode = MODE_FINISHED; saveWinToHistory("Tie"); saveGameStateToFile();
+                    backgroundMusic.stop(); if (victoryMusic.getStatus() != sf::SoundSource::Playing) victoryMusic.play();
+                }
+                else if (flag1) {
+                    gameMode = MODE_FINISHED; saveWinToHistory(player1Name); player1Wins++; saveWinsCount(); saveGameStateToFile();
+                    backgroundMusic.stop(); if (victoryMusic.getStatus() != sf::SoundSource::Playing) victoryMusic.play();
+                }
+                else if (flag2) {
+                    gameMode = MODE_FINISHED; saveWinToHistory(player2Name); player2Wins++; saveWinsCount(); saveGameStateToFile();
+                    backgroundMusic.stop(); if (victoryMusic.getStatus() != sf::SoundSource::Playing) victoryMusic.play();
                 }
             }
 
-            if (state == FINISHED && e.type == sf::Event::KeyPressed && e.key.code == sf::Keyboard::Space) {
-                deleteSave();
-                p1 = ""; p2 = "";
-                state = ENTER_P1;
-
-                // --- AUDIO: RESET ---
-                winMusic.stop();
+            // Restart after finished
+            if (gameMode == MODE_FINISHED && e.type == sf::Event::KeyPressed && e.key.code == sf::Keyboard::Space) {
+                deleteSaveFile(); player1Name = ""; player2Name = ""; gameMode = MODE_ENTER_P1; victoryMusic.stop();
             }
         }
 
-        if (state == COUNTDOWN) {
-            countdown--;
-            if (countdown <= 0) { countdown = 120; state = PLAYING; }
+        // Countdown logic outside event handling
+        if (gameMode == MODE_COUNTDOWN) {
+            countdownTicks--;
+            if (countdownTicks <= 0) { countdownTicks = 120; gameMode = MODE_PLAYING; }
         }
 
+        // Autosave every second
         if (!inMenu && autosaveClock.getElapsedTime().asSeconds() >= 1.0f) {
-            saveGameState();
-            autosaveClock.restart();
+            saveGameStateToFile(); autosaveClock.restart();
         }
 
-        if (!inMenu) drawAll(win, font);
-        win.display();
+        // Draw current screen
+        if (!inMenu) drawGameScreen(window, font);
+        else drawMenuScreen(window, font, saveFileExists());
     }
-    //testinghi2
+
     return 0;
 }
