@@ -6,12 +6,11 @@
 #include <cstdlib>
 #include <ctime>
 #include <string>
-#include <cstdio>
-#include <limits>
+#include <filesystem>
 
 using namespace std;
 
-// -------------------- CONFIG --------------------
+// 
 const int CELL_SIZE = 24;
 const int MAZE_W = 31;
 const int MAZE_H = 31;
@@ -29,11 +28,11 @@ const int MAX_WINS_TO_STORE = 3; // stores last 3 wins in history
 // Maze storage: only 2D arrays, simple loops
 int maze[MAZE_H][MAZE_W];
 
-// Movement offsets (up, down, left, right) stepping by 2 for maze generation
+// Movement offsets up, down, left, right
 int moveX[4] = { 0, 0, -2, 2 };
 int moveY[4] = { -2, 2, 0, 0 };
 
-// -------------------- GAME MODE CONSTANTS (no enum) --------------------
+// game constants
 const int MODE_MENU = 10;
 const int MODE_ENTER_P1 = 0;
 const int MODE_ENTER_P2 = 1;
@@ -52,11 +51,11 @@ int player1X = 1, player1Y = 1;
 int player2X = 1, player2Y = 1;
 bool player1Reached = false, player2Reached = false;
 
-// Start/goal
+// Start and goal
 int startX = 1, startY = 1;
 int goalX = MAZE_W - 2, goalY = MAZE_H - 2;
 
-// Countdown counter (frames or ticks)
+// Countdown counter 
 int countdownTicks = 120;
 
 // Win counters
@@ -84,7 +83,6 @@ void shuffleArray(int arr[], int n) {
     }
 }
 
-// -------------------- BEGINNER-FRIENDLY RANDOM WALK --------------------
 void generateMazeSimple() {
     fillAllWithWalls();
 
@@ -115,7 +113,7 @@ void generateMazeSimple() {
             }
         }
 
-        // If stuck, scan for any unvisited neighbor and jump to continue
+        //  scan for any unvisited neighbor and jump to continue
         if (!madeProgress) {
             for (int ty = 1; ty < MAZE_H - 1; ty += 2) {
                 for (int tx = 1; tx < MAZE_W - 1; tx += 2) {
@@ -152,11 +150,16 @@ float centerPixelY(int gridY) { return gridY * CELL_SIZE + CELL_SIZE / 2.0f; }
 
 // -------------------- FILE & SAVE HELPERS --------------------
 bool atomicWriteReplace(const string& filename, const string& tempname, const string& data) {
-    ofstream fout(tempname.c_str(), ios::trunc);
+    // write temp file
+    ofstream fout(tempname, ios::trunc);
     if (!fout) return false;
     fout << data;
     fout.close();
+
+    // remove original file if exists
     remove(filename.c_str());
+
+    // rename temp to original
     if (rename(tempname.c_str(), filename.c_str()) != 0) {
         remove(tempname.c_str());
         return false;
@@ -166,51 +169,47 @@ bool atomicWriteReplace(const string& filename, const string& tempname, const st
 
 void saveWinToHistory(const string& winner) {
     string previous[MAX_WINS_TO_STORE];
-    int c = 0;
-    ifstream fin(WINS_FILE.c_str());
+    int count = 0;
+    ifstream fin(WINS_FILE);
     string line;
-    while (getline(fin, line) && c < MAX_WINS_TO_STORE) {
-        if (!line.empty()) { previous[c] = line; c++; }
+    while (getline(fin, line) && count < MAX_WINS_TO_STORE) {
+        if (!line.empty()) previous[count++] = line;
     }
     fin.close();
 
     time_t now = time(nullptr);
     char buf[64];
-    struct tm* t = localtime(&now);
-    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", t);
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", localtime(&now));
     string entry = winner + " at " + buf;
 
-    ofstream fout(WINS_FILE.c_str(), ios::trunc);
+    ofstream fout(WINS_FILE, ios::trunc);
     fout << entry << "\n";
-    for (int i = 0; i < c; i++) fout << previous[i] << "\n";
-    fout.close();
+    for (int i = 0; i < count; i++) fout << previous[i] << "\n";
 }
 
 void saveWinsCount() {
-    ofstream fout(WINS_COUNT_FILE.c_str(), ios::trunc);
+    ofstream fout(WINS_COUNT_FILE, ios::trunc);
     if (!fout) return;
     fout << player1Wins << " " << player2Wins << "\n";
-    fout.close();
 }
 
 void loadWinsCount() {
-    ifstream fin(WINS_COUNT_FILE.c_str());
+    ifstream fin(WINS_COUNT_FILE);
     if (!fin) { player1Wins = 0; player2Wins = 0; return; }
     fin >> player1Wins >> player2Wins;
-    fin.close();
 }
 
 bool saveGameStateToFile() {
-    string content = "";
+    string content;
     content += to_string(gameMode) + "\n";
-    content += player1Name + "\n";
-    content += player2Name + "\n";
+    content += player1Name + "\n" + player2Name + "\n";
     content += to_string(player1X) + " " + to_string(player1Y) + "\n";
     content += to_string(player2X) + " " + to_string(player2Y) + "\n";
-    content += to_string((int)player1Reached) + " " + to_string((int)player2Reached) + "\n";
+    content += to_string(player1Reached) + " " + to_string(player2Reached) + "\n";
     content += to_string(countdownTicks) + "\n";
     content += to_string(startX) + " " + to_string(startY) + "\n";
     content += to_string(goalX) + " " + to_string(goalY) + "\n";
+
     for (int y = 0; y < MAZE_H; y++) {
         for (int x = 0; x < MAZE_W; x++) {
             content += to_string(maze[y][x]);
@@ -218,32 +217,38 @@ bool saveGameStateToFile() {
         }
         content += "\n";
     }
+
     return atomicWriteReplace(SAVE_FILE, SAVE_TMP, content);
 }
 
 bool loadGameStateFromFile() {
-    ifstream fin(SAVE_FILE.c_str());
+    ifstream fin(SAVE_FILE);
     if (!fin) return false;
-    int m;
-    if (!(fin >> m)) { fin.close(); return false; }
-    gameMode = m;
-    fin.ignore(numeric_limits<streamsize>::max(), '\n');
+
+    fin >> gameMode;
+    fin.ignore(); 
     getline(fin, player1Name);
     getline(fin, player2Name);
     fin >> player1X >> player1Y >> player2X >> player2Y;
-    int d1, d2; fin >> d1 >> d2; player1Reached = (d1 != 0); player2Reached = (d2 != 0);
+    int d1, d2;
+    fin >> d1 >> d2;
+    player1Reached = (d1 != 0);
+    player2Reached = (d2 != 0);
     fin >> countdownTicks >> startX >> startY >> goalX >> goalY;
+
     for (int y = 0; y < MAZE_H; y++)
         for (int x = 0; x < MAZE_W; x++) fin >> maze[y][x];
-    fin.close();
+
     return true;
 }
 
-void deleteSaveFile() { remove(SAVE_FILE.c_str()); }
+void deleteSaveFile() {
+    error_code ec;
+    filesystem::remove(SAVE_FILE, ec);
+}
 
 bool saveFileExists() {
-    ifstream f(SAVE_FILE.c_str());
-    return f.good();
+    return filesystem::exists(SAVE_FILE);
 }
 
 void resetWinCounters() { player1Wins = 0; player2Wins = 0; saveWinsCount(); }
@@ -375,7 +380,7 @@ int main() {
     if (!font.loadFromFile("C:\\Windows\\Fonts\\arial.ttf")) {
         cout << "Warning: failed to load font from C:\\Windows\\Fonts\\arial.ttf" << endl;
     }
-#elif defined(__APPLE__)
+#elif defined(_APPLE_)
     if (!font.loadFromFile("/System/Library/Fonts/Supplemental/Arial.ttf")) {
         cout << "Warning: failed to load system font on macOS." << endl;
     }
